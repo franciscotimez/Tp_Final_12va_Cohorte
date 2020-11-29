@@ -50,12 +50,16 @@ int main(void)
 	printf("Puerto serie iniciado!\r\n");
 	while (1)
 	{
+		int tec, state;
 		if (serial_receive(buffer, BUFFER_LENGTH) > 0)
 		{
 			printf("From CIAA: %s", buffer);
+			sscanf(buffer, ">SW:%d,%d", &tec, &state);
+			//printf("Send to CIAA: >OUT:%d,%d\r\n", tec, state);
+			sprintf(buffer, ">OUT:%d,%d\r\n", tec, state);
+			serial_send(buffer, BUFFER_LENGTH);
 		}
-		printf("wait!\r\n");
-		sleep(1);
+		usleep(10000);
 	}
 
 	exit(EXIT_SUCCESS);
