@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdbool.h>
 #include <unistd.h>
 #include <signal.h>
 #include <pthread.h>
@@ -19,24 +20,28 @@
 #define SERIAL_PORT 1
 #define BAUDRATE 115200
 
-#define BUFFER_LENGTH 11
+#define BUFFER_LENGTH 12
 
 char bufferIn[BUFFER_LENGTH];
 char bufferOut[BUFFER_LENGTH];
+
+bool sigint_flag = false;
 
 int tec, state;
 int ifSend = 0;
 
 pthread_t thread_ws;
 int socket_ws;
-int ws_fd;
-//pthread_mutex_t mutexData = PTHREAD_MUTEX_INITIALIZER;
+int ws_fd = 0;
+pthread_mutex_t mutexData = PTHREAD_MUTEX_INITIALIZER;
 
 void *start_thread(void *arg);
 void Serial_Service(void);
 void sigint_handler(int sig);
 void bloquearSign(void);
 void desbloquearSign(void);
+void cerrar_ws(void);
+void cierre_sigint(void);
 
 /*********************************************************************
  * 					MAIN FUNCTION
@@ -94,15 +99,18 @@ void Serial_Service(void)
 	printf("Puerto serie iniciado!\r\n");
 	while (1)
 	{
-		if (serial_receive(bufferIn, BUFFER_LENGTH) > 0)
+		if (serial_receive(bufferIn, BUFFER_LENGTH) > 0 && ws_fd != 0)
 		{
+			printf("Enviar a ws!\r\n");
+			pthread_mutex_lock (&mutexData);
 			if (send(ws_fd, bufferIn, BUFFER_LENGTH, 0) == -1)
-			{
-				if (close(ws_fd) == 0)
-					printf("server: Cliente desconectado!\r\n");
-			}
+				cerrar_ws();
+			pthread_mutex_unlock (&mutexData);
 		}
 		usleep(10000);
+		
+		if (sigint_flag)
+			cierre_sigint();
 	}
 }
 
@@ -112,7 +120,12 @@ void Serial_Service(void)
 void sigint_handler(int sig)
 {
 	write(STD_OUTPUT, SIGINT_MSG, sizeof(SIGINT_MSG));
+	sigint_flag = true;
+}
 
+void cierre_sigint(void)
+{
+	printf("Cierre desde hilo principal!\r\n");
 	// Cierro el socket
 	if (close(ws_fd) == 0)
 		write(STD_OUTPUT, CLOSE_SOCKET_MSG, sizeof(CLOSE_SOCKET_MSG));
@@ -149,6 +162,11 @@ void *start_thread(void *arg)
 
 	// Creamos socket
 	socket_ws = socket(AF_INET, SOCK_STREAM, 0);
+	if (socket_ws == -1)
+	{
+		perror("socket_fail!");
+		exit(1);
+	}
 
 	// Cargamos datos de IP:PORT del server
 	bzero((char *)&serveraddr, sizeof(serveraddr));
@@ -200,14 +218,15 @@ void *start_thread(void *arg)
 		{
 			printf("server: escuchando al cliente\r\n");
 			nBytesReceive = read(ws_fd, buffer, BUFFER_LENGTH);
-			buffer[nBytesReceive] = 0x00;
-			printf("Recibi %d bytes.:%s\n", nBytesReceive, buffer);
-			serial_send(buffer, nBytesReceive);
+			if (nBytesReceive > 0)
+			{
+				printf("Recibi %d bytes.:%s\n", nBytesReceive, buffer);
+				serial_send(buffer, nBytesReceive);
+			}
 		}
 
 		// Cerramos conexion con cliente
-		if (close(ws_fd) == 0)
-			printf("server: Cliente desconectado!\r\n");
+		cerrar_ws();
 	}
 
 	return 0;
@@ -239,4 +258,13 @@ void desbloquearSign(void)
 	//sigaddset(&set, SIGUSR1);
 	pthread_sigmask(SIG_UNBLOCK, &set,
 					NULL);
+}
+
+void cerrar_ws()
+{
+	if (close(ws_fd) == 0)
+	{
+		ws_fd = 0;
+		printf("server: Cliente desconectado!\r\n");
+	}
 }
